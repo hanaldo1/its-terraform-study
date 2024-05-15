@@ -89,3 +89,244 @@ data <데이터 소스 유형> <이름> {
 
 ### 데이터 참조
 - `data.<데이터 소스 유형>.<이름>.<속성>` : 외부 리소스 및 데이터에서 획득 가능한 값 (Attributes) (ex. 기 정의된 AWS VPC 리소스의 CIDR 값)
+
+## 5. 입력 변수
+### 변수 선언
+```
+variable '<이름>' {
+  <인수> = <값>
+}
+```
+- 변수 블록 이름은 모듈 내에서 고유해야 함
+- `var.<이름>` 로 참조
+- 민감한 값을 포함한 변수의 경우, 정의 시 `sensitive = true` 를 추가 (실행 계획에 변수 값이 출력되지 않음)
+- 입력 변수 값 지정 우선순위는 다음과 같음 (낮음 < 높음)
+  - CLI 에서 입력 < variable 블록 default 값 < TF_VAR_<이름> 환경변수 < terraform.tfvars 파일 < *.auto.tfvars 파일 <  *.auto.tfvars.json 파일 < CLI -var 및 -var-file 옵션
+
+### 변수 유형
+- any (모든 유형 허용)
+
+원시(Primitive) 타입
+- string
+- number
+- bool
+
+컬렉션(Collection) 유형
+- list
+- map
+- set
+
+구조(Structural) 유형
+- object
+- tuple
+
+#### list 와 set 차이
+- list 및 set 을 정의하는 방법은 비슷하지만, set 의 경우 값을 기준으로 정렬
+- 또한 list 의 경우 인덱스를 통해서 특정 요소를 참조할 수 있으나, set 은 인덱스 및 키를 통해 특정 요소를 참조할 수 없음.
+  - set 타입의 변수에서 특정 요소 참조 시도 시, `Elements of a set are identified only by their value and don't have any separate index or key to select with, so it's only possible to perform operations across all elements of the set.` 와 같은 에러 발생
+  ```
+  variable "list" {
+    type = list(string)
+    default = [
+      "test2",
+      "test1"
+    ]
+  }
+  => [ "test2", "test1" ]
+  => var.list.0 으로 특정 요소 참조 가능
+
+  variable "set" {
+    type = set(string)
+    default = [
+      "test2",
+      "test1"
+    ]
+  }
+  => [ "test1", "test2" ] # 값 기준 정렬 됨
+  => var.set.0 과 같이 특정 요소 참조 불가능
+  ```
+
+- set 의 경우, 고유한 값의 집합을 정의해야 할 때 주로 사용
+
+  ```
+  variable "list" {
+    type = list(string)
+    default = [
+      "test2",
+      "test2"
+    ]
+  }
+  => [ "test2", "test2" ]
+
+  variable "set" {
+    type = set(string)
+    default = [
+      "test2",
+      "test2"
+    ]
+  }
+  => [ "test2" ]
+  ```
+
+#### list 와 tuple 차이
+- list 의 경우 모든 요소는 동일한 타입이어야 함 (크기는 가변적)
+  ```
+  variable "list" {
+  type = list(any)
+    default = [
+      true,
+      0
+    ]
+  }
+  => 두 요소의 유형이 다르기 때문에 에러 발생
+  ```
+
+- tuple 의 경우 여러 타입을 혼합해서 정의가 가능하지만, tuple 변수에 정의된 유형 집합과 실제 값의 개수가 일치해야 하며 유형 또한 일치해야 함
+
+    ```
+    variable "tuple1" {
+      type = tuple([ string, number ])
+      default = [ "value", 0 ] # success 
+    }
+
+    variable "tuple2" {
+      type = tuple([ string, number ])
+      default = [ "value", "value" ]
+    }
+    => 두번째 요소의 유형이 number 가 아니기 때문에 에러 발생
+
+    variable "tuple3" {
+      type = tuple([ string, number ])
+      default = [ "value", 0, 0 ]
+    }
+    => 타입 정의 시 명시한 요소 개수와 실제 값 개수가 다르기 때문에 에러 발생
+    ```
+
+#### map 과 object 차이
+- map 의 경우 모든 요소는 동일한 타입이어야 함 (크기는 가변적)
+  - 키와 값은 : 또는 = 으로 구분 가능
+  - 키에 한해서 숫자로 시작하는 경우를 제외하고는 "" 는 생략 가능
+  - 한 줄로 값을 정의할 경우 각 요소는 `,` 로 구분되어야 하며, 멀티라인의 경우 개행으로도 구분 가능
+
+  ```
+  variable "map" {
+    type = map(string)
+    default = { key1 = "value1", key2 = "value2" } # 키 quote 생략 가능
+    
+    default = { "key1" = "value1", "key2" = "value2" } # single line
+    
+    default = {
+      "key1" = "value1"
+      "key2" = "value2"
+    } # multi line
+  }
+
+  variable "map2" {
+    type = map(any)
+    default = {
+      "key1" = true, "key2" = 0
+    }
+  }
+  => 두 요소 값 유형이 다르기 때문에 에러 발생
+  ```
+
+- object 의 경우 여러 타입을 혼합해서 정의가 가능하지만, 정의된 스키마와 실제 값이 일치해야 하며 유형 또한 일치해야 함
+
+  ```
+  variable "object1" {
+    type = object({
+      name = string
+      age = number
+    })
+    default = {
+      name = "value1",
+      age = 0
+    }
+  } # success
+
+  variable "object2" {
+    type = object({
+      name = string
+      age = number
+    })
+    default = {
+      name = "value1",
+      age = "test"
+    }
+  }
+  => age 값이 정의된 유형과 다르기 때문에 에러 발생
+
+  variable "object3" {
+    type = object({
+      name = string
+      age = number
+    })
+    default = {
+      name = "value1",
+      age = 0,
+      test = "test"
+    }
+  }
+  => 에러가 발생하지 않지만 스키마에 정의되지 않은 값은 무시됨
+  ```
+
+### 변수 유효성 검사
+- 변수 정의 시 validation 블럭을 추가하여 입력 값에 대한 유효성 검증 가능
+- can 과 regex 함수를 함께 사용하여 정규식을 통한 검증도 가능
+
+  ```
+  variable "validation" {
+    type = string
+    default = "test"
+
+    validation {
+      condition = can(regex("^value", var.validation))
+      error_message = "not matched"
+    }
+
+    validation {
+      condition = var.validation == "test1"
+      error_message = "not test1"
+    }
+  }
+  ```
+
+### 변수 값 지정 파일
+#### terraform.tfvars, *.auto.tfvars
+```
+<변수 이름> = <값>
+```
+
+#### *.auto.tfvars.json
+```
+{
+  "<변수 이름>": <값>
+}
+```
+
+## 6. local
+### local 선언
+```
+locals {
+  <이름> = <값> # 상수, variable, 리소스 속성으로 값 정의 가능
+
+  # ex) name = "test"
+  # ex) name = var.test
+  # ex) name = local_file.a.content
+}
+```
+- local 이름은 모듈 내에서 고유해야 하며, 입력 변수(variable) 과는 다르게 외부에서 값을 지정해줄 수는 없음
+- `local.<이름>` 으로 참조하며, 선언된 모듈 내에서만 참조 가능
+  - 반대로 같은 모듈 내라면 다른 파일에 정의되어있는 local 도 참조 가능
+
+## 7. output
+### output 선언
+```
+output "<이름>" {
+  value = <값>
+}
+```
+- 기본적으로 프로비저닝 후의 결과(ex. 리소스 속성(attribute) 를 확인하기 위해서 사용)
+- 또한 다른 모듈에서 해당 모듈의 특정 데이터에 참조해야 할 때 사용 (즉, output 값은 다른 모듈에서 참조 가능)
+- 리소스 속성(attribute) 의 경우 프로비저닝 된 후에 알 수 있기 때문에 plan 시에는 정확한 값이 출력되지는 않음 (apply 이후에 확인 가능)
+- `sensitive = true` 인수를 추가하면, 실제 값은 출력되지 않음

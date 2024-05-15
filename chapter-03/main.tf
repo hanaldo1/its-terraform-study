@@ -112,3 +112,33 @@ terraform {
 #   content = data.local_file.abc.content
 #   filename = "${path.module}/from_data_source.txt"
 # }
+
+/*
+ * 5. Input Variable
+ */
+
+## ===> Check Input Variable's value
+
+# output "list" {
+#   value = var.list
+# }
+
+# output "set" {
+#   value = var.set
+# }
+
+# output "tuple" {
+#   value = var.tuple
+# }
+
+# output "map" {
+#   value = var.map
+# }
+
+# output "object" {
+#   value = var.object
+# }
+
+output "priority" {
+  value = var.priority
+}
