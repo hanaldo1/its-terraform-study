@@ -330,3 +330,173 @@ output "<이름>" {
 - 또한 다른 모듈에서 해당 모듈의 특정 데이터에 참조해야 할 때 사용 (즉, output 값은 다른 모듈에서 참조 가능)
 - 리소스 속성(attribute) 의 경우 프로비저닝 된 후에 알 수 있기 때문에 plan 시에는 정확한 값이 출력되지는 않음 (apply 이후에 확인 가능)
 - `sensitive = true` 인수를 추가하면, 실제 값은 출력되지 않음
+
+## 8. 반복문
+### count
+```
+locals {
+  list = tolist([ "a", "c" ])
+}
+
+resource "local_file" "test" {
+  count = length(local.list)
+  content = "test ${local.list[count.index]}"
+  filename = "${path.module}/test${count.index}"
+}
+
+=> local_file.test[0], local_file.test[1], local_file.test[2] 리소스 생성
+=> test0, test1, test2 파일 생성
+```
+- 선언된 정수만큼 리소스를 생성하며, `count.index` 를 통해 인덱스 값을 참조할 수 있음
+- count 수를 정의하기 위해 list 입력변수 를 사용한 경우, 중간 값을 삭제하면 해당 리소스만 제거되는 것이 아닌 이후 인덱스의 리소스 모두 제거되거나 교체(replace) 되는 등 영향을 받음 (사용 시 주의 필요)
+
+### for_each
+```
+locals {
+  set = toset([ "a", "c" ])
+  map = {
+    a = "value a"
+    b = "value b"
+  }
+}
+
+resource "local_file" "test" {
+  for_each = local.set # or local.map
+  content = "test ${each.value}"
+  filename = "${path.module}/test${each.key}"
+}
+```
+- map 또는 set 을 기준으로, 선언된 키 값 개수 만큼 리소스를 생성하며, `each.key` 및 `each.value` 를 통해 각각 키 및 값을 참조할 수 있음 (set 의 경우, key 와 value 값 동일)
+- count 와 다르게 for_each 는 인덱스가 아닌 키 값을 사용하기 때문에, set 및 map 의 값을 변경하여도 변경한 값에 대한 리소스만 영향을 받음
+
+### for
+```
+locals {
+  list = tolist([ "a", "c" ])
+}
+
+resource "local_file" "test" {
+  content = jsonencode([ for v in local.list: upper(v) ])
+  filename = "${path.module}/test.txt"
+}
+
+resource "local_file" "test2" {
+  content = jsonencode({for v in local.list: v => upper(v) })
+  filename = "${path.module}/test2.txt"
+}
+```
+- for 의 경우 복합 형식 값의 형태를 변환하는데 사용
+- list 의 경우 인수가 하나인 경우(`for v in ...`) 값을, 두개인 경우(`for i, v in ...`) 각각 인덱스 및 값을 참조할 수 있음
+- map 의 경우 두개의 인수(`for k, v in ...`)로 각각 키 및 값을 참조할 수 있음
+- for 문을 [] 로 감싸면 tuple, {} 로 감싸면 object 을 반환
+  - object 의 경우 => 기호를 통해 키-값 쌍을 구분
+  - _[확인 해보기] 단 object 로 반환하는 경우 키 값은 고유해야 하기 때문에 `...` 를 이용해 그룹화 필요_
+
+- if 문을 추가하여 특정 조건에 맞는 값만 필터링 가능
+  ```
+  resource "local_file" "test2" {
+    content = jsonencode({
+      for v in local.list: v => upper(v)
+      if v == "a"
+    })
+    filename = "${path.module}/test2.txt"
+  }
+  ```
+
+### dynamic
+```
+resource "<리소스 유형>" "<이름>" {
+  <인수> = <값>
+  ...
+  
+  dynamic "<리소스 블럭-인수>" {
+    for_each = ...
+    content {
+      <인수 블럭-인수> = <값>
+    }
+  }
+}
+```
+- 리소스 자체를 여러개 생성하는 것이 아닌, 리소스 선언 내 구성 블럭을 반복하여 정의 해야하는 경우 사용
+  - EX. AWS Security Group Rule, Docker container port
+
+- 실제로 정의해야 하는 인수를 dynamic 블럭 이름으로, 반복할 값을 for_each 에, 실제 인수 블럭 내에 정의해야 하는 내용을 content 블럭으로 정의
+  - 리소스 블럭에서 for_each 사용 시 `each.key` 및 `each.value` 를 사용 가능한 것처럼, dynamic 블럭에서 for_each 사용 시 `<dynamic 블럭 이름>.key` 및 `<dynamic 블럭 이름>.value` 로 값 참조 가능
+
+  ### Ex. Docker Container 생성
+  ```
+  locals {
+    ports = [
+      {
+        internal = 1234
+        external = 1234
+      },
+      {
+        internal = 5678
+        external = 5678
+      }
+    ]
+  }
+
+  provider "docker" {}
+
+  resource "docker_image" "ubuntu" {
+    name = "ubuntu:20.04"
+  }
+
+  # Create a container
+  resource "docker_container" "ubuntu" {
+    image = docker_image.ubuntu.image_id
+    name  = "ubuntu"
+    command = [ "tail",  "-f" ]
+
+    dynamic "ports" {
+      for_each = local.ports
+      content {
+        internal = ports.value.internal
+        external = ports.value.external
+      }
+    }
+  }
+  ```
+
+## 9. 조건식
+```
+<조건 문> ? <참일 경우 결과> : <거짓일 경우 결과>
+
+=> local.a == "A" ? "true" : "false"
+```
+
+## 10. 함수
+- 테라폼에서는 upper, join 과 같이 값의 유형을 변경하거나 조합할 수 있는 내장함수를 지원함
+  - 자세한 함수 리스트는 [링크](https://developer.hashicorp.com/terraform/language/functions) 참고
+- 다만, 사용자 정의 함수는 지원하지 않음
+- 함수의 결과 및 동작을 확인하기 위해 terraform console 을 사용할 수 있음 (python REPL과 유사)
+
+## 11. 프로비저너
+
+## 12. null_resource
+
+## 13. moved
+
+## 14. 시스템 환경변수
+### TF_LOG
+- 테라폼 sterr 로그 레벨 (trace, debug, info, warn, error, off)
+  - 환경변수 없는 경우 off 와 동일
+- 다음 환경변수들과 같이 사용할 수 있음
+  - TF_LOG_PATH: 로그 출력 파일 경로
+  - TF_LOG_CORE: 테라폼 자체 코어 로그 레벨 정의
+  - TF_LOG_PROVIDER: 테라폼 프로바이더 로그 레벨 정의
+
+### TF_INPUT (-input 옵션)
+- false 또는 0으로 설정 시, 입력 변수에 대한 입력을 받지 않음
+
+### TF_VAR_<name>
+- 입력 변수 `<name>` 에 대한 값 지정
+
+### TF_CLI_ARGS, TF_CLI_ARGS_<subcommand>
+- cli 및 cli 서브 커맨드 실행 시 추가할 인수(ex. -input) 정의
+
+### TF_DATA_DIR
+- 작업 디렉토리 별 데이터 저장 위치 (default: `.terraform`)
+  - 민약 실행마다 해당 환경변수 값이 달라지는 경우, 기 설치된 모듈/프로바이더를 찾지 못하므로 사용 시 주의 필요

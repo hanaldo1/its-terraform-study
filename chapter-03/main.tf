@@ -6,6 +6,11 @@ terraform {
       source = "hashicorp/local"
       version = "2.5.1"
     }
+
+    docker = {
+      source = "kreuzwerker/docker"
+      version = "3.0.2"
+    }
   }
 }
 
@@ -139,6 +144,93 @@ terraform {
 #   value = var.object
 # }
 
-output "priority" {
-  value = var.priority
+# output "priority" {
+#   value = var.priority
+# }
+
+/*
+ * 8. Loop
+ */ 
+
+
+locals {
+  list = tolist([ "a", "c" ])
+  set = toset([ "a", "c" ])
+  map = {
+    a = "value a"
+    b = "value b"
+    c = "value c"
+  }
+}
+
+## ==> count
+# resource "local_file" "test" {
+#   count = length(local.list)
+#   content = "test ${local.list[count.index]}"
+#   filename = "${path.module}/test${count.index}"
+# }
+
+## ==> for_each
+# resource "local_file" "test" {
+#   for_each = local.set # or local.map
+#   content = "test ${each.value}"
+#   filename = "${path.module}/test${each.key}"
+# }
+
+## ==> for
+# resource "local_file" "test" {
+#   content = jsonencode([ for v in local.list: upper(v) ])
+#   filename = "${path.module}/test.txt"
+# }
+
+# resource "local_file" "test" {
+#   for_each = toset([ for v in local.list: upper(v) ])
+#   content = "test ${each.value}"
+#   filename = "${path.module}/test${each.key}.txt"
+# }
+
+# resource "local_file" "test2" {
+#   content = jsonencode({
+#     for v in local.list: v => upper(v)
+#     if v == "a"
+#   })
+#   filename = "${path.module}/test2.txt"
+# }
+
+## ==> Dynamic
+locals {
+  ports = [
+    {
+      internal = 1234
+      external = 1234
+    },
+    {
+      internal = 5678
+      external = 5678
+    }
+  ]
+}
+
+provider "docker" {
+  # Configuration options
+}
+
+# Pulls the image
+resource "docker_image" "ubuntu" {
+  name = "ubuntu:20.04"
+}
+
+# Create a container
+resource "docker_container" "ubuntu" {
+  image = docker_image.ubuntu.image_id
+  name  = "ubuntu"
+  command = [ "tail",  "-f" ]
+
+  dynamic "ports" {
+    for_each = local.ports
+    content {
+      internal = ports.value.internal
+      external = ports.value.external
+    }
+  }
 }
