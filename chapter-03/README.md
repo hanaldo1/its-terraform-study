@@ -474,10 +474,101 @@ resource "<리소스 유형>" "<이름>" {
 - 함수의 결과 및 동작을 확인하기 위해 terraform console 을 사용할 수 있음 (python REPL과 유사)
 
 ## 11. 프로비저너
+- 프로비저너 실행 결과는 terraform state 파일에 기록되지 않으므로 사용에 주의
+- 리소스가 프로비저닝된 이후에 수행할 동작을 지정하며, `self` 를 통해 리소스 속성 값을 참조할 수 있음
+- 프로비저너 블럭에 on_failure=continue 를 명시하면 해당 프로비저너가 실패해도 다음 단계(ex. 다음 프로비저너 또는 종료) 로 넘어감
+- 프로비저너 블럭에 `when=destroy` 를 명시하면 terraform destroy 시에만 해당 프로비저너가 실행되도록 제한을 걸 수 있음
+
+### local-exec
+: 테라폼이 실행되는 환경에서 주어진 명령줄 실행
+```
+resource <리소스 유형> <이름> {
+  ...
+  provisioner "local-exec" {
+    command = "실행할 명령줄. << 연산자로 multi-line 으로 입력 가능
+    # working_dir = "commmand 실행할 디렉토리"
+    # interperter = "명령어 실행하는데 필요한 인터프리터. 첫번쩨 인수 = 인터프리터 이름, 두번째~ = 인터프리터 인수"
+    # environment = "명령어 실행 시 필요한 환경변수. 기본적으로 실행환경의 환경변수 상속 받음"
+  }
+}
+```
+
+### remote-exec
+: 원격지에서 주어진 명령줄 실행
+```
+resource <리소스 유형> <이름> {
+  ...
+  provisioner "remote-exec" {
+    inline = "실행할 명령 목록. ex. [ "<명령 1>", "<명령 2>", .. ]
+    script = "원격지에서 실행할 로컬 스크립트 경로"
+    scripts = "원격지에서 실행할 로컬 스크립트 경로 목록"
+  }
+}
+```
+- inline, script, scripts 중 하나만 선언해야 함
+- 스크립트 실행 시 인수가 필요하다면 file 프로비저너로 먼저 원격지에 파일 복사 후 inline 을 통해 필요한 인수와 함께 스크립트 실행 명령어를 명시해줘야 함 (script 또는 scripts 대신)
+
+#### connection 블럭
+: remote-exec 와 file 과 같이 원격지 연결이 필요한 경우 connection 블럭을 리소스 블럭(모든 프로비저너에 공통 적용) 또는 프로비저너 블럭(해당 프로비저너에만 적용) 에 같이 작성
+```
+connection {
+  host = "x.x.x.x" # 필수
+  type = "ssh"
+  user = "ubuntu"
+  password = "..."
+  private_key = "ssh-key.pem" # password 보다 우선
+}
+```
+- 원격지 연결 시 bastion 호스트를 이용해야 하는 경우, [관련 인수](https://developer.hashicorp.com/terraform/language/resources/provisioners/connection#connecting-through-a-bastion-host-with-ssh) 지원
+- 더 자세한 인수들은 [링크](https://developer.hashicorp.com/terraform/language/resources/provisioners/connection#argument-reference) 참고
+
+### file
+: 원격지에 파일 또는 디렉토리 복사
+```
+resource <리소스 유형> <이름> {
+  ...
+  provisioner "file" {
+    destination = "원격지 내 파일 및 디렉토리 경로" # 필수.
+    source = "원격지에 복사할 로컬 파일 및 디렉토리 경로"
+    content = "원격지에 복사할 내용. 대상 경로가 디렉토리인 경우, 해당 디렉토리 내 tf-file-content 라는 이름으로 파일이 생성됨"
+  }
+}
+```
+- source, content 둘 중 하나만 선언해야 함
+- ssh 연결의 경우, 원격지에 destination 에 선언한 디렉토리가 존재해야 함
+- destination 이 디렉토리일 때, source 가 / 없이 (ex. /tmp/var) 선언되면 해당 디렉토리가, / 와 함께 (ex. /tmp/var/) 선언되면 해당 디렉토리 내 모든 파일이 복사됨
 
 ## 12. null_resource
+: 아무것도 수행하지 않는 리소스, 주로 프로비저너와 함께 사용하거나 모듈/반복문/로컬 변수와도 함께 사용
 
-## 13. moved
+- null_resource 는 구성이 변경되더라도 변경된 것으로 인식되지 않기 때문에, trigger 인수를 사용하여 특정 조건에 다시 실행 될 수 있도록 정의 가능
+
+  ```
+  resource "null_resource" "test" {
+    trigger = {
+      <name> = <트리거 조건>
+    }
+  }
+  ```
+  - <트리거 조건> 에 리소스 속성이 명시되면, 해당 리소스 속성이 변경 되는 경우 재실행 함
+  - <트리거 조건> 에 time() 이 명시되면, 매 실행 계획마다 재실행 함
+
+### terraform_data
+> 테라폼 1.4 버전부터는 terraform_data 가 null_resource 를 대체. 자세한 내용은 [링크](https://developer.hashicorp.com/terraform/language/resources/terraform-data) 참고
+
+
+## 13. [moved](https://developer.hashicorp.com/terraform/language/moved)
+```
+moved {
+  from = <기존 리소스 참조 주소>
+  to = <변경되는 리소스 참조 주소>
+}
+```
+- 테라폼 리소스의 이름을 변경해야 하는 경우 사용
+  - EX. count 로 생성하던 리소스를 for_each 로 생성하거나 모듈로 이동하여 참조 주소가 변경되는 경우
+- 리소스 이름 변경이 완료된 이후에는 moved 블럭 제거 필요
+
+
 
 ## 14. 시스템 환경변수
 ### TF_LOG
